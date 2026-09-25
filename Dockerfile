@@ -1,7 +1,11 @@
-FROM node:18-bullseye
+FROM node:20-bookworm-slim
 
-# Install OpenJDK (gives javac and jar commands) and wget
-RUN apt-get update && apt-get install -y default-jdk wget && rm -rf /var/lib/apt/lists/*
+# Install OpenJDK (gives javac & jar) and wget
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
