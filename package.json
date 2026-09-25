@@ -1,0 +1,12 @@
+{
+  "name": "speedai-compiler",
+  "version": "1.0.0",
+  "description": "J2ME Java to JAR Cloud Compiler for SpeedAI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
