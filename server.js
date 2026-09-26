@@ -20,15 +20,7 @@ app.get('/ping', (req, res) => {
     res.json({ ok: true, status: 'SpeedAI Compiler Ready' });
 });
 
-app.get('/builds/:file', (req, res) => {
-    const filePath = path.join(BUILDS_DIR, req.params.file);
-    if (fs.existsSync(filePath)) {
-        res.setHeader('Content-Type', 'application/java-archive');
-        return res.download(filePath, req.params.file);
-    }
-    return res.status(404).send('File not found or expired.');
-});
-
+// Compilation endpoint
 app.post('/compile', (req, res) => {
     const { code, appName } = req.body;
 
@@ -36,12 +28,13 @@ app.post('/compile', (req, res) => {
         return res.status(400).json({ ok: false, error: 'No Java code provided' });
     }
 
+    // ⚡ Robust Class Name Matching
     let mainClass = 'SpeedApp';
-    const match = code.match(/public\s+class\s+(\w+)/);
+    const match = code.match(/class\s+([A-Za-z0-9_]+)\s+extends\s+MIDlet/i) || code.match(/(?:public\s+)?class\s+([A-Za-z0-9_]+)/i);
     if (match && match[1]) {
         mainClass = match[1];
     }
-    const cleanAppName = (appName || mainClass).replace(/[^a-zA-Z0-9_]/g, '');
+    const cleanAppName = (appName && appName !== 'Class_1' ? appName : mainClass).replace(/[^a-zA-Z0-9_]/g, '');
 
     const stamp = Date.now();
     const workDir = path.join(__dirname, 'tmp', `${cleanAppName}_${stamp}`);
@@ -63,7 +56,7 @@ MicroEdition-Profile: MIDP-2.0
         const manifestFile = path.join(workDir, 'MANIFEST.MF');
         fs.writeFileSync(manifestFile, manifestContent, 'utf8');
 
-        // ⚡ FIX: Target Java 8 (version 52.0) so J2ME Loader & Android dx can DEX without error
+        // Java 8 Target compilation for J2ME DEX compatibility
         const stubsPath = path.join(__dirname, 'midpapi20.jar');
         const cldcPath = path.join(__dirname, 'cldcapi11.jar');
         
@@ -75,7 +68,6 @@ MicroEdition-Profile: MIDP-2.0
 
         exec(compileCmd, { cwd: workDir }, (compileErr, stdout, stderr) => {
             if (compileErr) {
-                // Fallback compilation without strict version flags if needed
                 exec(`javac -cp "${cpArgs}" *.java`, { cwd: workDir }, (fallbackErr, fOut, fErr) => {
                     if (fallbackErr) {
                         fs.rmSync(workDir, { recursive: true, force: true });
