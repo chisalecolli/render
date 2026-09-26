@@ -12,8 +12,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Download standard J2ME MIDP 2.0 stubs for compiling mobile apps
-RUN wget -O midpapi20.jar https://github.com/flyve-mdm/midp20-stubs/raw/master/midpapi20.jar || true
+# Download official J2ME MIDP 2.0 & CLDC 1.1 stubs from Maven Central
+RUN wget -O midpapi20.jar https://repo1.maven.org/maven2/org/microemu/midpapi20/2.0.4/midpapi20-2.0.4.jar
+RUN wget -O cldcapi11.jar https://repo1.maven.org/maven2/org/microemu/cldcapi11/2.0.4/cldcapi11-2.0.4.jar
 
 COPY . .
 
