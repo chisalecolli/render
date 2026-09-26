@@ -20,7 +20,15 @@ app.get('/ping', (req, res) => {
     res.json({ ok: true, status: 'SpeedAI Compiler Ready' });
 });
 
-// Compilation endpoint
+app.get('/builds/:file', (req, res) => {
+    const filePath = path.join(BUILDS_DIR, req.params.file);
+    if (fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'application/java-archive');
+        return res.download(filePath, req.params.file);
+    }
+    return res.status(404).send('File not found or expired.');
+});
+
 app.post('/compile', (req, res) => {
     const { code, appName } = req.body;
 
@@ -28,7 +36,6 @@ app.post('/compile', (req, res) => {
         return res.status(400).json({ ok: false, error: 'No Java code provided' });
     }
 
-    // ⚡ Robust Class Name Matching
     let mainClass = 'SpeedApp';
     const match = code.match(/class\s+([A-Za-z0-9_]+)\s+extends\s+MIDlet/i) || code.match(/(?:public\s+)?class\s+([A-Za-z0-9_]+)/i);
     if (match && match[1]) {
@@ -44,6 +51,7 @@ app.post('/compile', (req, res) => {
         const javaFile = path.join(workDir, `${mainClass}.java`);
         fs.writeFileSync(javaFile, code, 'utf8');
 
+        // Manifest for J2ME MIDlet
         const manifestContent = 
 `Manifest-Version: 1.0
 MIDlet-1: ${cleanAppName}, , ${mainClass}
@@ -56,7 +64,6 @@ MicroEdition-Profile: MIDP-2.0
         const manifestFile = path.join(workDir, 'MANIFEST.MF');
         fs.writeFileSync(manifestFile, manifestContent, 'utf8');
 
-        // Java 8 Target compilation for J2ME DEX compatibility
         const stubsPath = path.join(__dirname, 'midpapi20.jar');
         const cldcPath = path.join(__dirname, 'cldcapi11.jar');
         
@@ -64,11 +71,13 @@ MicroEdition-Profile: MIDP-2.0
         if (fs.existsSync(stubsPath)) cpArgs += `:${stubsPath}`;
         if (fs.existsSync(cldcPath)) cpArgs += `:${cldcPath}`;
 
-        let compileCmd = `javac -cp "${cpArgs}" -source 8 -target 8 *.java`;
+        // ⚡ FIX: Use ECJ (Eclipse Compiler) with -1.4 flag for Nokia / Symbian bytecode compatibility
+        let compileCmd = `ecj -1.4 -cp "${cpArgs}" -d . *.java`;
 
         exec(compileCmd, { cwd: workDir }, (compileErr, stdout, stderr) => {
             if (compileErr) {
-                exec(`javac -cp "${cpArgs}" *.java`, { cwd: workDir }, (fallbackErr, fOut, fErr) => {
+                // Fallback to javac with Java 8 if ecj fails
+                exec(`javac -cp "${cpArgs}" -source 8 -target 8 *.java`, { cwd: workDir }, (fallbackErr, fOut, fErr) => {
                     if (fallbackErr) {
                         fs.rmSync(workDir, { recursive: true, force: true });
                         return res.json({ ok: false, error: `Compile Error: ${fErr || fallbackErr.message}` });
