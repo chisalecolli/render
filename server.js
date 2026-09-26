@@ -7,20 +7,28 @@ const app = express();
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Serve compiled JAR and JAD downloads
 const BUILDS_DIR = path.join(__dirname, 'public', 'builds');
 if (!fs.existsSync(BUILDS_DIR)) {
     fs.mkdirSync(BUILDS_DIR, { recursive: true });
 }
-app.use('/builds', express.static(BUILDS_DIR));
 
 // Health check endpoint
 app.get('/', (req, res) => {
-    res.send('SpeedAI Cloud Java-to-JAR Compiler is Online!');
+    res.status(200).send('SpeedAI Cloud Java-to-JAR Compiler Online');
 });
 
 app.get('/ping', (req, res) => {
     res.json({ ok: true, status: 'SpeedAI Compiler Ready' });
+});
+
+// Explicit file download route
+app.get('/builds/:file', (req, res) => {
+    const filePath = path.join(BUILDS_DIR, req.params.file);
+    if (fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'application/java-archive');
+        return res.download(filePath, req.params.file);
+    }
+    return res.status(404).send('File not found or expired.');
 });
 
 // Compilation endpoint
@@ -46,7 +54,6 @@ app.post('/compile', (req, res) => {
         const javaFile = path.join(workDir, `${mainClass}.java`);
         fs.writeFileSync(javaFile, code, 'utf8');
 
-        // Create MANIFEST.MF for J2ME MIDlet
         const manifestContent = 
 `Manifest-Version: 1.0
 MIDlet-1: ${cleanAppName}, , ${mainClass}
@@ -59,7 +66,6 @@ MicroEdition-Profile: MIDP-2.0
         const manifestFile = path.join(workDir, 'MANIFEST.MF');
         fs.writeFileSync(manifestFile, manifestContent, 'utf8');
 
-        // OpenJDK 17 compatible compilation with J2ME stubs
         const stubsPath = path.join(__dirname, 'midpapi20.jar');
         let compileCmd = `javac *.java`;
         if (fs.existsSync(stubsPath)) {
@@ -69,14 +75,9 @@ MicroEdition-Profile: MIDP-2.0
         exec(compileCmd, { cwd: workDir }, (compileErr, stdout, stderr) => {
             if (compileErr) {
                 fs.rmSync(workDir, { recursive: true, force: true });
-                console.error('Compile Error:', stderr || compileErr.message);
-                return res.json({ 
-                    ok: false, 
-                    error: `Compile Error: ${stderr || compileErr.message}` 
-                });
+                return res.json({ ok: false, error: `Compile Error: ${stderr || compileErr.message}` });
             }
 
-            // Package compiled .class files into .jar
             const jarName = `${cleanAppName}_${stamp}.jar`;
             const jarPath = path.join(BUILDS_DIR, jarName);
             const jarCmd = `jar cfm "${jarPath}" MANIFEST.MF *.class`;
@@ -87,13 +88,10 @@ MicroEdition-Profile: MIDP-2.0
                     return res.json({ ok: false, error: 'JAR packaging failed' });
                 }
 
-                // Dynamic host URL for Render
-                const protocol = req.headers['x-forwarded-proto'] || 'https';
-                const host = req.headers['host'];
-                const baseUrl = `${protocol}://${host}`;
-
-                const jarUrl = `${baseUrl}/builds/${jarName}`;
-                const jarSize = fs.statSync(jarPath).size;
+                // Read binary bytes and return Base64 for permanent storage
+                const jarBytes = fs.readFileSync(jarPath);
+                const jarB64 = jarBytes.toString('base64');
+                const jarSize = jarBytes.length;
 
                 fs.rmSync(workDir, { recursive: true, force: true });
 
@@ -101,7 +99,8 @@ MicroEdition-Profile: MIDP-2.0
                     ok: true,
                     appName: cleanAppName,
                     mainClass: mainClass,
-                    jar_url: jarUrl,
+                    jar_name: `${cleanAppName}.jar`,
+                    jar_b64: jarB64,
                     size: jarSize
                 });
             });
@@ -114,4 +113,4 @@ MicroEdition-Profile: MIDP-2.0
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`SpeedAI Compiler running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Compiler running on port ${PORT}`));
