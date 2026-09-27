@@ -20,21 +20,37 @@ app.get('/ping', (req, res) => {
     res.json({ ok: true, status: 'SpeedAI Compiler Ready' });
 });
 
-app.get('/builds/:file', (req, res) => {
-    const filePath = path.join(BUILDS_DIR, req.params.file);
-    if (fs.existsSync(filePath)) {
-        res.setHeader('Content-Type', 'application/java-archive');
-        return res.download(filePath, req.params.file);
+// Helper: Clean up compiler errors to be concise for mobile screen
+function cleanCompilerError(stderr, msg) {
+    const raw = stderr || msg || 'Compilation failed';
+    const lines = raw.split('\n');
+    const filtered = lines.filter(l => l.includes('error:') || l.includes('cannot find') || l.includes('unclosed'));
+    if (filtered.length > 0) {
+        return filtered.slice(0, 3).join('; ');
     }
-    return res.status(404).send('File not found or expired.');
-});
+    return raw.substring(0, 180);
+}
+
+// Helper: Auto-balance braces
+function balanceJavaCode(code) {
+    let open = (code.match(/\{/g) || []).length;
+    let close = (code.match(/\}/g) || []).length;
+    let balanced = code;
+    while (open > close) {
+        balanced += "\n}";
+        close++;
+    }
+    return balanced;
+}
 
 app.post('/compile', (req, res) => {
-    const { code, appName } = req.body;
+    let { code, appName } = req.body;
 
     if (!code || code.trim().length < 30) {
         return res.status(400).json({ ok: false, error: 'No Java code provided' });
     }
+
+    code = balanceJavaCode(code);
 
     let mainClass = 'SpeedApp';
     const match = code.match(/class\s+([A-Za-z0-9_]+)\s+extends\s+MIDlet/i) || code.match(/(?:public\s+)?class\s+([A-Za-z0-9_]+)/i);
@@ -51,7 +67,6 @@ app.post('/compile', (req, res) => {
         const javaFile = path.join(workDir, `${mainClass}.java`);
         fs.writeFileSync(javaFile, code, 'utf8');
 
-        // Manifest for J2ME MIDlet
         const manifestContent = 
 `Manifest-Version: 1.0
 MIDlet-1: ${cleanAppName}, , ${mainClass}
@@ -71,16 +86,15 @@ MicroEdition-Profile: MIDP-2.0
         if (fs.existsSync(stubsPath)) cpArgs += `:${stubsPath}`;
         if (fs.existsSync(cldcPath)) cpArgs += `:${cldcPath}`;
 
-        // ⚡ FIX: Use ECJ (Eclipse Compiler) with -1.4 flag for Nokia / Symbian bytecode compatibility
         let compileCmd = `ecj -1.4 -cp "${cpArgs}" -d . *.java`;
 
         exec(compileCmd, { cwd: workDir }, (compileErr, stdout, stderr) => {
             if (compileErr) {
-                // Fallback to javac with Java 8 if ecj fails
                 exec(`javac -cp "${cpArgs}" -source 8 -target 8 *.java`, { cwd: workDir }, (fallbackErr, fOut, fErr) => {
                     if (fallbackErr) {
                         fs.rmSync(workDir, { recursive: true, force: true });
-                        return res.json({ ok: false, error: `Compile Error: ${fErr || fallbackErr.message}` });
+                        const errorReason = cleanCompilerError(fErr, fallbackErr.message);
+                        return res.json({ ok: false, error: errorReason });
                     }
                     packageJar(workDir, cleanAppName, mainClass, stamp, res);
                 });
